@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CURD Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <div>
+        <p class="eyebrow">Dashboard</p>
+        <h1>CURD</h1>
+        <p class="subcopy">Add name and age, then update or delete records from the table below.</p>
+      </div>
+      <div class="hero-stat">
+        <span>{{ people|length }}</span>
+        <small>Records</small>
+      </div>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    <section class="grid-layout">
+      <article class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Add Entry</p>
+            <h2>New Person</h2>
+          </div>
+        </div>
+        <form class="stack-form" action="{{ url_for('add_person') }}" method="post">
+          <label>
+            <span>Name</span>
+            <input type="text" name="name" placeholder="Enter name" required>
+          </label>
+          <label>
+            <span>Age</span>
+            <input type="number" name="age" min="1" placeholder="Enter age" required>
+          </label>
+          <button type="submit" class="primary-btn">Add Record</button>
+        </form>
+      </article>
+
+      <article class="panel table-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Records</p>
+            <h2>People List</h2>
+          </div>
+        </div>
+
+        {% if edit_person %}
+          <div class="edit-card">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow">Edit Mode</p>
+                <h3>Update Person #{{ edit_person.id }}</h3>
+              </div>
+            </div>
+            <form class="stack-form" action="{{ url_for('update_person', person_id=edit_person.id) }}" method="post">
+              <label>
+                <span>Name</span>
+                <input type="text" name="name" value="{{ edit_person.name }}" required>
+              </label>
+              <label>
+                <span>Age</span>
+                <input type="number" name="age" min="1" value="{{ edit_person.age }}" required>
+              </label>
+              <div class="button-row">
+                <button type="submit" class="primary-btn">Save Changes</button>
+                <a class="ghost-btn" href="{{ url_for('index') }}">Cancel</a>
+              </div>
+            </form>
+          </div>
+        {% endif %}
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Age</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for person in people %}
+                <tr>
+                  <td>{{ loop.index }}</td>
+                  <td>{{ person.name }}</td>
+                  <td>{{ person.age }}</td>
+                  <td>
+                    <div class="action-row">
+                      <a class="chip edit" href="{{ url_for('index', edit=person.id) }}">Edit</a>
+                      <form action="{{ url_for('delete_person', person_id=person.id) }}" method="post" onsubmit="return confirm('Delete this record?');">
+                        <button type="submit" class="chip delete">Delete</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% else %}
+                <tr>
+                  <td colspan="4" class="empty-state">No records yet. Add the first person above.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
