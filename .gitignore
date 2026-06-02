@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+desktop.ini
+
+# Logs
+*.log
+
+# Node modules (if any)
+node_modules/
+
+# Codex temporary files
+.codex/
