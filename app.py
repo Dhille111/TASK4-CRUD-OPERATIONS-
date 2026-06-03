@@ -1,58 +1,85 @@
 from __future__ import annotations
 
+import csv
 import os
-import sqlite3
-from contextlib import closing
+from contextlib import contextmanager
 from pathlib import Path
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "people.db"
+CSV_PATH = BASE_DIR / "people.csv"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "crud-dashboard-secret")
 
+engine = create_engine(
+    f"sqlite:///{DATABASE_PATH}",
+    connect_args={"check_same_thread": False},
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-def get_db_connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Person(Base):
+    __tablename__ = "people"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(nullable=False)
+    age: Mapped[int] = mapped_column(nullable=False)
 
 
 def init_db() -> None:
-    with closing(get_db_connection()) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS people (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                age INTEGER NOT NULL
-            )
-            """
-        )
-        connection.commit()
+    Base.metadata.create_all(bind=engine)
+
+
+def sync_people_csv() -> None:
+    with get_db_session() as session:
+        people = session.scalars(select(Person).order_by(Person.id)).all()
+
+    with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=["id", "name", "age"])
+        writer.writeheader()
+        for person in people:
+            writer.writerow(person_to_dict(person))
+
+
+@contextmanager
+def get_db_session() -> Session:
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def person_to_dict(person: Person) -> dict[str, int | str]:
+    return {"id": person.id, "name": person.name, "age": person.age}
 
 
 @app.before_request
 def ensure_database() -> None:
     if not DATABASE_PATH.exists():
         init_db()
+        sync_people_csv()
 
 
 @app.route("/")
 def index():
     edit_id = request.args.get("edit", type=int)
-    with closing(get_db_connection()) as connection:
-        people = connection.execute(
-            "SELECT id, name, age FROM people ORDER BY id ASC"
-        ).fetchall()
-        edit_person = None
-        if edit_id is not None:
-            edit_person = connection.execute(
-                "SELECT id, name, age FROM people WHERE id = ?",
-                (edit_id,),
-            ).fetchone()
+    with get_db_session() as session:
+        people = session.scalars(select(Person).order_by(Person.id)).all()
+        edit_person = session.get(Person, edit_id) if edit_id is not None else None
     return render_template("index.html", people=people, edit_person=edit_person)
 
 
@@ -65,12 +92,10 @@ def add_person():
         flash("Enter a valid name and age.", "error")
         return redirect(url_for("index"))
 
-    with closing(get_db_connection()) as connection:
-        connection.execute(
-            "INSERT INTO people (name, age) VALUES (?, ?)",
-            (name, int(age)),
-        )
-        connection.commit()
+    with get_db_session() as session:
+        session.add(Person(name=name, age=int(age)))
+
+    sync_people_csv()
 
     flash("Record added successfully.", "success")
     return redirect(url_for("index"))
@@ -85,15 +110,14 @@ def update_person(person_id: int):
         flash("Enter a valid name and age.", "error")
         return redirect(url_for("index", edit=person_id))
 
-    with closing(get_db_connection()) as connection:
-        cursor = connection.execute(
-            "UPDATE people SET name = ?, age = ? WHERE id = ?",
-            (name, int(age), person_id),
-        )
-        connection.commit()
+    with get_db_session() as session:
+        person = session.get(Person, person_id)
+        if person is None:
+            abort(404)
+        person.name = name
+        person.age = int(age)
 
-    if cursor.rowcount == 0:
-        abort(404)
+    sync_people_csv()
 
     flash("Record updated successfully.", "success")
     return redirect(url_for("index"))
@@ -101,12 +125,13 @@ def update_person(person_id: int):
 
 @app.route("/delete/<int:person_id>", methods=["POST"])
 def delete_person(person_id: int):
-    with closing(get_db_connection()) as connection:
-        cursor = connection.execute("DELETE FROM people WHERE id = ?", (person_id,))
-        connection.commit()
+    with get_db_session() as session:
+        person = session.get(Person, person_id)
+        if person is None:
+            abort(404)
+        session.delete(person)
 
-    if cursor.rowcount == 0:
-        abort(404)
+    sync_people_csv()
 
     flash("Record deleted successfully.", "success")
     return redirect(url_for("index"))
@@ -115,11 +140,9 @@ def delete_person(person_id: int):
 @app.route("/api/people", methods=["GET", "POST"])
 def people_api():
     if request.method == "GET":
-        with closing(get_db_connection()) as connection:
-            rows = connection.execute(
-                "SELECT id, name, age FROM people ORDER BY id ASC"
-            ).fetchall()
-        return jsonify([dict(row) for row in rows])
+        with get_db_session() as session:
+            people = session.scalars(select(Person).order_by(Person.id)).all()
+        return jsonify([person_to_dict(person) for person in people])
 
     payload = request.get_json(silent=True) or {}
     name = str(payload.get("name", "")).strip()
@@ -128,24 +151,27 @@ def people_api():
     if not name or not isinstance(age, int):
         return jsonify({"error": "name and integer age are required"}), 400
 
-    with closing(get_db_connection()) as connection:
-        cursor = connection.execute(
-            "INSERT INTO people (name, age) VALUES (?, ?)",
-            (name, age),
-        )
-        connection.commit()
+    with get_db_session() as session:
+        person = Person(name=name, age=age)
+        session.add(person)
+        session.flush()
 
-    return jsonify({"id": cursor.lastrowid, "name": name, "age": age}), 201
+    sync_people_csv()
+
+    return jsonify({"id": person.id, "name": name, "age": age}), 201
 
 
 @app.route("/api/people/<int:person_id>", methods=["PUT", "DELETE"])
 def person_api(person_id: int):
     if request.method == "DELETE":
-        with closing(get_db_connection()) as connection:
-            cursor = connection.execute("DELETE FROM people WHERE id = ?", (person_id,))
-            connection.commit()
-        if cursor.rowcount == 0:
-            return jsonify({"error": "not found"}), 404
+        with get_db_session() as session:
+            person = session.get(Person, person_id)
+            if person is None:
+                return jsonify({"error": "not found"}), 404
+            session.delete(person)
+
+        sync_people_csv()
+
         return jsonify({"message": "deleted"})
 
     payload = request.get_json(silent=True) or {}
@@ -155,19 +181,21 @@ def person_api(person_id: int):
     if not name or not isinstance(age, int):
         return jsonify({"error": "name and integer age are required"}), 400
 
-    with closing(get_db_connection()) as connection:
-        cursor = connection.execute(
-            "UPDATE people SET name = ?, age = ? WHERE id = ?",
-            (name, age, person_id),
-        )
-        connection.commit()
+    with get_db_session() as session:
+        person = session.get(Person, person_id)
+        if person is None:
+            return jsonify({"error": "not found"}), 404
+        person.name = name
+        person.age = age
 
-    if cursor.rowcount == 0:
-        return jsonify({"error": "not found"}), 404
+    sync_people_csv()
 
     return jsonify({"id": person_id, "name": name, "age": age})
 
 
+init_db()
+sync_people_csv()
+
+
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True)
