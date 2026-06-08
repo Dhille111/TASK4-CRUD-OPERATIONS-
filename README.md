@@ -26,6 +26,9 @@ python app.py
 ```
 
 4. Open http://127.0.0.1:5000 in your browser.
+5. # output images-
+6. <img width="1920" height="1017" alt="image" src="https://github.com/user-attachments/assets/614b6913-cb15-4cf0-ad9a-ab8e4f05e8e7" />
+
 
 Notes
 - `people.db` is the ORM-backed SQLite storage file.
